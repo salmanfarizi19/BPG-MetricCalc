@@ -1,8 +1,19 @@
+
 "use client"
+import { Suspense } from "react"
+export const dynamic = "force-dynamic"
 
 import { useState } from "react"
 import { supabase } from "@/lib/supabase"
 import { useRouter,useSearchParams } from "next/navigation"
+
+export default function Page(){
+  return (
+    <Suspense>
+      <AuthPage/>
+    </Suspense>
+  )
+}
 
 export default function AuthPage(){
 
