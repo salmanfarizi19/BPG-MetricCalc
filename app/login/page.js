@@ -15,7 +15,7 @@ export default function Page(){
   )
 }
 
-export default function AuthPage(){
+function AuthPage(){
 
   const router = useRouter()
 
