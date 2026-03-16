@@ -94,13 +94,30 @@ if(player.role === "coach"){
 
 } else {
 
+
+
 const { data, error } = await supabase.auth.signUp({
   email: email.trim(),
   password: password.trim()
 })
 
 if(error){
-  alert(error.message)
+
+  if(error.message.includes("User already registered")){
+    alert("Account already exists. Please login.")
+    setMode("login")
+  }else{
+    alert(error.message)
+  }
+
+  setLoading(false)
+  return
+}
+
+// extra safety check
+if(data?.user?.identities?.length === 0){
+  alert("Account already exists. Please login.")
+  setMode("login")
   setLoading(false)
   return
 }
@@ -149,7 +166,16 @@ setMode("login")
 setLoading(false)
 
 }
+async function signInWithGoogle(){
 
+  await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: `${window.location.origin}/auth/callback`
+    }
+  })
+
+}
 return(
 
 <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -165,7 +191,22 @@ return(
 </h1>
 
 <div className="space-y-4">
+<button
+onClick={signInWithGoogle}
+className="w-full border border-slate-300 rounded-lg py-3 flex items-center justify-center gap-2 hover:bg-slate-50"
+>
+<img
+src="https://www.svgrepo.com/show/475656/google-color.svg"
+className="w-5 h-5"
+/>
+Sign in with Google
+</button>
 
+<div className="flex items-center gap-2 text-slate-400 text-sm">
+<div className="flex-1 border-t"></div>
+<span>or</span>
+<div className="flex-1 border-t"></div>
+</div>
 {mode === "signup" && (
 
 <div className="space-y-4">

@@ -23,10 +23,12 @@ async function loadProfile(){
 
 const { data:{ user } } = await supabase.auth.getUser()
 
+if(!user) return
+
 const { data } = await supabase
 .from("players")
 .select("*")
-.eq("id",user.id)
+.eq("user_id", user.id)
 .single()
 
 if(data){
@@ -44,6 +46,8 @@ async function updateProfile(){
 
 const { data:{ user } } = await supabase.auth.getUser()
 
+if(!user) return
+
 await supabase
 .from("players")
 .update({
@@ -53,7 +57,7 @@ height,
 weight,
 position
 })
-.eq("id",user.id)
+.eq("user_id", user.id)
 
 if(role === "coach"){
 router.push("/coach")
@@ -123,11 +127,18 @@ className="w-full border border-slate-300 rounded-lg p-3 focus:outline-none focu
 <label className="block text-sm font-semibold text-slate-600 mb-1">
 Position
 </label>
-<input
+<select
 value={position}
 onChange={e=>setPosition(e.target.value)}
-className="w-full border border-slate-300 rounded-lg p-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-/>
+className="w-full border border-slate-300 rounded-lg p-3"
+>
+<option value="">Select Position</option>
+<option>Point Guard</option>
+<option>Shooting Guard</option>
+<option>Small Forward</option>
+<option>Power Forward</option>
+<option>Center</option>
+</select>
 </div>
 
 <div className="flex gap-4 pt-2">

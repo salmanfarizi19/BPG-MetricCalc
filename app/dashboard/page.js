@@ -38,6 +38,7 @@ export default function Dashboard() {
 const menuRef = useRef(null)
   const router = useRouter()
   const [playerName,setPlayerName] = useState("")
+  const [playerId,setPlayerId] = useState(null)
 
 
   useEffect(()=>{
@@ -62,6 +63,12 @@ document.removeEventListener("mousedown",handleClickOutside)
   useEffect(() => {
     checkUser()
   }, [])
+
+  useEffect(()=>{
+if(playerId){
+loadSessions()
+}
+},[playerId])
 async function checkUser(){
 
 const { data: { user } } = await supabase.auth.getUser()
@@ -71,35 +78,40 @@ router.push("/login")
 return
 }
 
-// load player profile
-const { data } = await supabase
+const { data, error } = await supabase
 .from("players")
-.select("name")
-.eq("id",user.id)
-.single()
+.select("id,name")
+.eq("user_id", user.id)
+.maybeSingle()
 
-setPlayerName(data?.name || "")
+if(!data){
+router.push("/complete-profile")
+return
+}
 
-loadSessions()
+setPlayerName(data.name)
+setPlayerId(data.id)
+
+
 
 }
-  async function loadSessions(){
+async function loadSessions(){
 
-    const { data: { user } } = await supabase.auth.getUser()
+if(!playerId) return
 
-    const { data, error } = await supabase
-      .from("sessions")
-      .select("*")
-      .eq("player_id", user.id)
-      .order("date", { ascending: false })
+const { data, error } = await supabase
+.from("sessions")
+.select("*")
+.eq("player_id", playerId)
+.order("date", { ascending: false })
 
-    if(error){
-      console.error(error)
-    } else {
-      setSessions(data || [])
-    }
+if(error){
+console.error(error)
+}else{
+setSessions(data || [])
+}
 
-  }
+}
     async function logout(){
 
     await supabase.auth.signOut()
@@ -107,24 +119,26 @@ loadSessions()
     router.push("/login")
 
   }
-  async function submitSession(e){
+async function submitSession(e){
 
+if(!playerId){
+alert("Player profile not loaded")
+return
+}
     e.preventDefault()
     setIsSubmitting(true)
 
     const load = rpe * duration
 
-    const { data: { user } } = await supabase.auth.getUser()
-
-    const { error } = await supabase
-      .from("sessions")
-      .insert({
-        player_id: user.id,
-        date: date,
-        rpe,
-        duration,
-        load
-      })
+const { error } = await supabase
+.from("sessions")
+.insert({
+player_id: playerId,
+date,
+rpe,
+duration,
+load
+})
 
     if(error){
       alert(error.message)

@@ -9,20 +9,25 @@ export default function UpdatePassword(){
   const [password,setPassword] = useState("")
   const router = useRouter()
 
-  async function updatePassword(){
+async function updatePassword(){
 
-    const { error } = await supabase.auth.updateUser({
-      password
-    })
-
-    if(error){
-      alert(error.message)
-    } else {
-      alert("Password updated!")
-      window.location.href="/login"
-    }
-
+  if(password.length < 6){
+    alert("Password must be at least 6 characters")
+    return
   }
+
+  const { error } = await supabase.auth.updateUser({
+    password
+  })
+
+  if(error){
+    alert(error.message)
+  } else {
+    alert("Password updated!")
+    router.push("/login")
+  }
+
+}
 
   return(
 
@@ -44,13 +49,13 @@ export default function UpdatePassword(){
 
         <div className="flex gap-3">
 
-          <button
-          onClick={updatePassword}
-          className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-3 rounded-lg font-semibold transition"
-          >
-          Update Password
-          </button>
-
+ <button
+onClick={updatePassword}
+disabled={password.length < 6}
+className="flex-1 bg-emerald-500 disabled:bg-slate-300 text-white py-3 rounded-lg font-semibold"
+>
+Update Password
+</button>
           <button
           onClick={()=>router.back()}
           className="flex-1 border border-slate-300 hover:bg-slate-100 py-3 rounded-lg transition"
