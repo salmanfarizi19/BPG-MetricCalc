@@ -384,9 +384,13 @@ const { data: teams } = await supabase
 
 setTeams(teams || [])
 
+// get only this coach's teams
+const teamIds = (teams || []).map(t => t.id)
+
 const { data: members } = await supabase
 .from("team_members")
 .select("*")
+.in("team_id", teamIds)
 
 // players belonging to selected team
 const teamPlayerIds = (members || [])
@@ -632,17 +636,10 @@ Dashboard
 
 
 <Link
-href="/coach/create-team"
+href="/coach/teams"
 className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-400 hover:bg-slate-800 hover:text-white transition"
 >
-
-<svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-<circle cx="8" cy="8" r="3"/>
-<path d="M2 18c1-3 5-5 6-5s5 2 6 5"/>
-</svg>
-
 Manage Teams
-
 </Link>
 
 </nav>
@@ -794,7 +791,7 @@ Create Team </button> */}
 <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
 
 <h3 className="font-bold text-lg mb-5 flex items-center gap-2">
-📄 Data Management
+📄 Upload data from CSV
 </h3>
 
 <div className="flex flex-col sm:flex-row gap-4 items-center">
