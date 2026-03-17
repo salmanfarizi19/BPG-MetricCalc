@@ -605,7 +605,7 @@ return(
 </div>
 
 <h2 className="text-xl font-bold tracking-tight">
-AthletiSync
+BPG MetricCalc
 </h2>
 
 </div>
@@ -651,7 +651,7 @@ Manage Teams
 {/* FOOTER */}
 <div className="p-6 border-t border-slate-800 text-sm text-slate-500">
 
-© {new Date().getFullYear()} AthletiSync
+© {new Date().getFullYear()} TSF
 
 </div>
 
