@@ -8,6 +8,8 @@ import { useRouter, useParams } from "next/navigation"
 import {
 LineChart,
 Line,
+BarChart,
+Bar,
 XAxis,
 YAxis,
 Tooltip,
@@ -35,6 +37,15 @@ const todayLabel = new Date().toLocaleDateString(undefined,{
   month:"short",
   day:"numeric"
 })
+
+const [showSessionModal,setShowSessionModal] = useState(false)
+const [editingSession,setEditingSession] = useState(null)
+
+const [sessionDate,setSessionDate] = useState("")
+const [sessionRpe,setSessionRpe] = useState(5)
+const [sessionDuration,setSessionDuration] = useState(60)
+const [sessionType,setSessionType] = useState("")
+const [sessionNotes,setSessionNotes] = useState("")
 
 useEffect(()=>{
 if(!id) return
@@ -68,6 +79,141 @@ const { data } = await supabase
 
 setSessions(data || [])
 
+}
+
+function openAddSession(){
+
+setEditingSession(null)
+
+setSessionDate(new Date().toISOString().slice(0,10))
+setSessionRpe(5)
+setSessionDuration(60)
+setSessionType("")
+setSessionNotes("")
+
+setShowSessionModal(true)
+
+}
+
+function openEditSession(session){
+
+setEditingSession(session)
+
+setSessionDate(session.date)
+setSessionRpe(session.rpe)
+setSessionDuration(session.duration)
+setSessionType(session.session_type || "")
+setSessionNotes(session.notes || "")
+
+setShowSessionModal(true)
+
+}
+
+async function saveSession(){
+
+const load = sessionRpe * sessionDuration
+
+if(editingSession){
+
+await supabase
+.from("sessions")
+.update({
+date: sessionDate,
+rpe: sessionRpe,
+duration: sessionDuration,
+load,
+session_type: sessionType,
+notes: sessionNotes,
+})
+.eq("id", editingSession.id)
+
+}else{
+
+await supabase
+.from("sessions")
+.insert({
+player_id: id,
+date: sessionDate,
+rpe: sessionRpe,
+duration: sessionDuration,
+load,
+session_type: sessionType,
+notes: sessionNotes,
+})
+
+}
+
+setShowSessionModal(false)
+loadSessions()
+
+}
+
+async function deleteSession(sessionId){
+
+if(!confirm("Delete this session?")) return
+
+await supabase
+.from("sessions")
+.delete()
+.eq("id",sessionId)
+
+loadSessions()
+
+}
+
+function calculateWeeklyLoad(){
+
+const weeks={}
+
+sessions.forEach(s=>{
+
+const date = new Date(s.date)
+const week = `${date.getFullYear()}-${Math.ceil(date.getDate()/7)}`
+
+if(!weeks[week]) weeks[week]=0
+
+weeks[week]+=Number(s.load||0)
+
+})
+
+return Object.entries(weeks).map(([week,load])=>({week,load}))
+}
+
+function calculateLoadTrend(){
+
+if(!Array.isArray(sessions)) return []
+
+const trend=[]
+
+for(let i=27;i>=0;i--){
+
+const d = new Date()
+d.setDate(d.getDate()-i)
+
+let acute=0
+let chronic=0
+
+sessions.forEach(s=>{
+
+const load = Number(s.load || 0)
+const sessionDate = new Date(s.date)
+
+const diffDays = (d - sessionDate)/(1000*60*60*24)
+
+if(diffDays<=7 && diffDays>=0) acute+=load
+if(diffDays<=28 && diffDays>=0) chronic+=load
+
+})
+
+trend.push({
+date: d.toLocaleDateString(undefined,{month:"short",day:"numeric"}),
+acute,
+chronic: chronic/4
+})
+
+}
+
+return trend
 }
 
 function calculateStats(){
@@ -294,6 +440,15 @@ load: s.load
 }))
 .reverse()
 
+const loadTrend = calculateLoadTrend()
+const weeklyLoad = calculateWeeklyLoad()
+
+const minAcute = stats.chronic * 0.8
+const maxAcute = stats.chronic * 1.3
+
+const minNextLoad = Math.max(0, Math.round(minAcute - stats.acute))
+const maxNextLoad = Math.max(0, Math.round(maxAcute - stats.acute))
+
 return(
 
 <div className="p-10 space-y-8 bg-slate-50 min-h-screen text-slate-900">
@@ -430,6 +585,53 @@ strokeWidth={3}
 
 </div>
 
+{/* ACUTE vs CHRONIC LOAD */}
+
+<div className="bg-white border border-slate-200 rounded-xl p-6">
+
+<h2 className="text-xl font-bold mb-4">
+Acute vs Chronic Load
+</h2>
+
+<div style={{ width:"100%", height:300 }}>
+
+<ResponsiveContainer>
+
+<LineChart data={loadTrend}>
+
+<CartesianGrid strokeDasharray="3 3"/>
+
+<XAxis dataKey="date"/>
+
+<YAxis/>
+
+<Tooltip/>
+
+<Line
+type="monotone"
+dataKey="acute"
+stroke="#ef4444"
+strokeWidth={3}
+name="Acute (7 days)"
+/>
+
+<Line
+type="monotone"
+dataKey="chronic"
+stroke="#3b82f6"
+strokeWidth={3}
+name="Chronic Avg"
+/>
+
+</LineChart>
+
+</ResponsiveContainer>
+
+</div>
+
+</div>
+
+
 {/* PROJECTED ACWR */}
 
 <div className="bg-white border border-slate-200 rounded-xl p-6">
@@ -479,15 +681,33 @@ Simulate tomorrow's session load
 
 </div>
 
-<div className="flex items-center gap-4">
+<div className="space-y-4">
 
+<div>
 <p className="text-lg font-semibold">
-Projected ACWR:
+Projected ACWR
 </p>
 
-<p className="text-2xl font-bold">
+<p className="text-3xl font-bold">
 {projectedAcwr.toFixed(2)}
 </p>
+</div>
+
+<div className="bg-slate-50 border border-slate-200 rounded-lg p-4 max-w-md">
+
+<p className="text-sm text-slate-500">
+Recommended Next Session Load
+</p>
+
+<p className="text-xl font-semibold">
+{minNextLoad} – {maxNextLoad}
+</p>
+
+<p className="text-xs text-slate-400">
+To remain in optimal ACWR range (0.8 – 1.3)
+</p>
+
+</div>
 
 </div>
 
@@ -530,13 +750,61 @@ strokeWidth={3}
 
 </div>
 
+{/* WEEKLY LOAD */}
+
+<div className="bg-white border border-slate-200 rounded-xl p-6">
+
+<h2 className="text-xl font-bold mb-4">
+Weekly Load
+</h2>
+
+<div style={{ width:"100%", height:300 }}>
+
+<ResponsiveContainer>
+
+<BarChart data={weeklyLoad}>
+
+<CartesianGrid strokeDasharray="3 3"/>
+
+<XAxis dataKey="week"/>
+
+<YAxis/>
+
+<Tooltip/>
+
+<Bar
+dataKey="load"
+fill="#6366f1"
+radius={[6,6,0,0]}
+/>
+
+</BarChart>
+
+</ResponsiveContainer>
+
+</div>
+
+</div>
+
+
 {/* SESSION HISTORY */}
 
 <div>
 
-<h2 className="text-xl font-bold mb-4">
+<div className="flex justify-between items-center mb-4">
+
+<h2 className="text-xl font-bold">
 Session History
 </h2>
+
+<button
+onClick={openAddSession}
+className="bg-emerald-500 hover:bg-emerald-600 text-white px-4 py-2 rounded-lg"
+>
++ Add Session
+</button>
+
+</div>
 
 <table className="w-full border border-slate-200 bg-white">
 
@@ -547,6 +815,7 @@ Session History
 <th className="p-3">RPE</th>
 <th className="p-3">Duration</th>
 <th className="p-3">Load</th>
+<th className="p-3">Actions</th>
 </tr>
 
 </thead>
@@ -566,7 +835,23 @@ Session History
 <td className="p-3 text-center">{s.duration}</td>
 
 <td className="p-3 text-center">{s.load}</td>
+<td className="p-3 text-center space-x-2">
 
+<button
+onClick={()=>openEditSession(s)}
+className="text-blue-600 hover:underline"
+>
+Edit
+</button>
+
+<button
+onClick={()=>deleteSession(s.id)}
+className="text-red-600 hover:underline"
+>
+Delete
+</button>
+
+</td>
 </tr>
 ))}
 
@@ -575,8 +860,75 @@ Session History
 </table>
 
 </div>
+{showSessionModal && (
+
+<div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+
+<div className="bg-white rounded-xl p-6 w-96 space-y-4">
+
+<h2 className="text-xl font-bold">
+{editingSession ? "Edit Session" : "Add Session"}
+</h2>
+
+<div>
+<p className="text-sm text-slate-500">Date</p>
+<input
+type="date"
+value={sessionDate}
+onChange={(e)=>setSessionDate(e.target.value)}
+className="border rounded p-2 w-full"
+/>
+</div>
+
+<div>
+<p className="text-sm text-slate-500">RPE</p>
+<input
+type="number"
+min="1"
+max="10"
+value={sessionRpe}
+onChange={(e)=>setSessionRpe(Number(e.target.value))}
+className="border rounded p-2 w-full"
+/>
+</div>
+
+<div>
+<p className="text-sm text-slate-500">Duration</p>
+<input
+type="number"
+value={sessionDuration}
+onChange={(e)=>setSessionDuration(Number(e.target.value))}
+className="border rounded p-2 w-full"
+/>
+</div>
+
+<div className="flex justify-end gap-3">
+
+<button
+onClick={()=>setShowSessionModal(false)}
+className="px-4 py-2 border rounded"
+>
+Cancel
+</button>
+
+<button
+onClick={saveSession}
+className="bg-emerald-500 text-white px-4 py-2 rounded"
+>
+Save
+</button>
 
 </div>
+
+</div>
+
+</div>
+
+)}
+</div>
+
+
+
 
 )
 
