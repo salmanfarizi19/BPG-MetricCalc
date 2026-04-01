@@ -49,6 +49,7 @@ const [showAlerts,setShowAlerts] = useState(false)
 const [playerLoadData,setPlayerLoadData] = useState([])
 const [importFile,setImportFile] = useState(null)
 const [toast,setToast] = useState(null)
+const [wellnessMap,setWellnessMap] = useState({})
 
 
 
@@ -365,6 +366,27 @@ a.download = "team_sessions.csv"
 a.click()
 
 }
+function getWellnessColor(value, type){
+
+if(value == null) return "text-slate-300"
+
+// reverse meaning for these
+const reverse = ["fatigue","soreness","stress"]
+
+const isReversed = reverse.includes(type)
+
+// GOOD
+if(isReversed){
+  if(value <= 2) return "text-emerald-500"
+  if(value === 3) return "text-yellow-500"
+  return "text-red-500"
+}else{
+  if(value >= 4) return "text-emerald-500"
+  if(value === 3) return "text-yellow-500"
+  return "text-red-500"
+}
+
+}
 
 async function loadPlayers(){
 
@@ -401,6 +423,34 @@ const { data: sessions } = await supabase
 .from("sessions")
 .select("*")
 .order("date",{ascending:false})
+
+const todayStr = new Date().toISOString().slice(0,10)
+
+const yesterdayDate = new Date()
+yesterdayDate.setDate(yesterdayDate.getDate() - 1)
+const yesterdayStr = yesterdayDate.toISOString().slice(0,10)
+
+const { data: wellnessLogs } = await supabase
+.from("wellness_logs")
+.select("*")
+.in("player_id", teamPlayerIds)
+.in("date", [todayStr, yesterdayStr])
+
+const map = {}
+
+for(const w of wellnessLogs || []){
+
+if(!map[w.player_id]){
+map[w.player_id] = {}
+}
+
+map[w.player_id][w.date] = w
+
+}
+
+setWellnessMap(map)
+
+
 
 
 // TEAM LOAD TREND (last 28 days)
@@ -585,7 +635,44 @@ setPlayerLoadData(loadDistribution)
 
 }
 
+function WellnessDots({ value, type }) {
 
+if(value == null){
+  return <span className="text-slate-300">-</span>
+}
+
+// reverse logic for some metrics
+const reverse = ["fatigue","soreness","stress"]
+const isReversed = reverse.includes(type)
+
+function getColor(v){
+  if(isReversed){
+    if(v <= 2) return "bg-emerald-500"
+    if(v === 3) return "bg-yellow-500"
+    return "bg-red-500"
+  }else{
+    if(v >= 4) return "bg-emerald-500"
+    if(v === 3) return "bg-yellow-500"
+    return "bg-red-500"
+  }
+}
+
+const color = getColor(value)
+
+return (
+  <div className="flex gap-1">
+    {[1,2,3,4,5].map(i=>(
+      <div
+        key={i}
+        className={`w-2 h-2 rounded-full ${
+          i <= value ? color : "bg-slate-200"
+        }`}
+      />
+    ))}
+  </div>
+)
+
+}
 
 
 
@@ -1084,6 +1171,11 @@ Invite Code:
 <th className="p-3 text-left">Player</th>
 <th className="p-3">ACWR</th>
 <th className="p-3">Spike</th>
+<th className="p-3">Sleep</th>
+<th className="p-3">Fatigue</th>
+<th className="p-3">Soreness</th>
+<th className="p-3">Stress</th>
+<th className="p-3">Mood</th>
 <th className="p-3">Risk</th>
 </tr>
 
@@ -1092,6 +1184,14 @@ Invite Code:
 <tbody className="divide-y divide-slate-100">
 
 {teamPlayers.map((p,i)=>{
+  const todayStr = new Date().toISOString().slice(0,10)
+
+const yesterdayDate = new Date()
+yesterdayDate.setDate(yesterdayDate.getDate() - 1)
+const yesterdayStr = yesterdayDate.toISOString().slice(0,10)
+
+const wToday = wellnessMap[p.id]?.[todayStr]
+const wYesterday = wellnessMap[p.id]?.[yesterdayStr]
 
 let risk="Optimal"
 let badge="bg-emerald-100 text-emerald-700"
@@ -1135,6 +1235,65 @@ className="font-semibold text-slate-800 hover:text-emerald-600"
 
 <td className="p-4 text-center">
 {p.spike>0?`+${p.spike}%`:`${p.spike}%`}
+</td>
+<td className="p-4 text-center">
+  <div className="flex flex-col items-center text-xs gap-1">
+
+    <span className="text-[10px] text-slate-400">Today</span>
+    <WellnessDots value={wToday?.sleep} type="sleep" />
+
+    <span className="text-[10px] text-slate-400 mt-2">Yesterday</span>
+    <WellnessDots value={wYesterday?.sleep} type="sleep" />
+
+  </div>
+</td>
+
+<td className="p-4 text-center">
+  <div className="flex flex-col items-center text-xs gap-1">
+
+    <span className="text-[10px] text-slate-400">Today</span>
+    <WellnessDots value={wToday?.fatigue} type="fatigue" />
+
+    <span className="text-[10px] text-slate-400 mt-2">Yesterday</span>
+    <WellnessDots value={wYesterday?.fatigue} type="fatigue" />
+
+  </div>
+</td>
+
+<td className="p-4 text-center">
+  <div className="flex flex-col items-center text-xs gap-1">
+
+    <span className="text-[10px] text-slate-400">Today</span>
+    <WellnessDots value={wToday?.soreness} type="soreness" />
+
+    <span className="text-[10px] text-slate-400 mt-2">Yesterday</span>
+    <WellnessDots value={wYesterday?.soreness} type="soreness" />
+
+  </div>
+</td>
+
+<td className="p-4 text-center">
+  <div className="flex flex-col items-center text-xs gap-1">
+
+    <span className="text-[10px] text-slate-400">Today</span>
+    <WellnessDots value={wToday?.stress} type="stress" />
+
+    <span className="text-[10px] text-slate-400 mt-2">Yesterday</span>
+    <WellnessDots value={wYesterday?.stress} type="stress" />
+
+  </div>
+</td>
+
+<td className="p-4 text-center">
+  <div className="flex flex-col items-center text-xs gap-1">
+
+    <span className="text-[10px] text-slate-400">Today</span>
+    <WellnessDots value={wToday?.mood} type="mood" />
+
+    <span className="text-[10px] text-slate-400 mt-2">Yesterday</span>
+    <WellnessDots value={wYesterday?.mood} type="mood" />
+
+  </div>
 </td>
 
 <td className="p-4 text-right">
