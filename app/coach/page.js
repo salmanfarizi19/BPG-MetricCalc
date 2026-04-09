@@ -4,7 +4,7 @@ import { useEffect,useState ,useRef} from "react"
 import { supabase } from "@/lib/supabase"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import Papa from "papaparse"
+import * as XLSX from "xlsx"
 import {
 ResponsiveContainer,
 LineChart,
@@ -284,20 +284,80 @@ load: Number(row.rpe) * Number(row.duration)
 
 })
 
+// // STEP 7 — bulk insert sessions
+// if(sessions.length > 0){
+// console.log("Sessions to insert:", sessions)
+// const { error:sessionError } = await supabase
+// .from("sessions")
+// .upsert(sessions,{
+// onConflict:"player_id,date"
+// })
+
+// if(sessionError){
+// console.error("Session insert error:",sessionError)
+// }
+
+// }
+
+// showToast("CSV Import Complete","success")
+// setImportFile(null) 
+
+// initPage()
+
 // STEP 7 — bulk insert sessions
 if(sessions.length > 0){
-console.log("Sessions to insert:", sessions)
-const { error:sessionError } = await supabase
-.from("sessions")
-.upsert(sessions,{
-onConflict:"player_id,date"
+  console.log("Sessions to insert:", sessions)
+  const { error:sessionError } = await supabase
+  .from("sessions")
+  .upsert(sessions,{
+  onConflict:"player_id,date"
+  })
+
+  if(sessionError){
+    console.error("Session insert error:",sessionError)
+  }
+}
+
+// ==========================================
+// NEW: STEP 8 — bulk insert wellness logs
+// ==========================================
+const wellnessData = []
+
+rows.forEach(row => {
+  const key = `${row.name}|${row.dob}`
+  const player = playerMap[key]
+
+  if(!player || !row.date) return
+
+  // Only add if the CSV row actually contains at least one wellness metric
+  if(row.sleep || row.fatigue || row.soreness || row.stress || row.mood) {
+    wellnessData.push({
+      player_id: player.id,
+      date: row.date,
+      sleep: row.sleep ? Number(row.sleep) : null,
+      fatigue: row.fatigue ? Number(row.fatigue) : null,
+      soreness: row.soreness ? Number(row.soreness) : null,
+      stress: row.stress ? Number(row.stress) : null,
+      mood: row.mood ? Number(row.mood) : null
+    })
+  }
 })
 
-if(sessionError){
-console.error("Session insert error:",sessionError)
-}
 
+
+
+if(wellnessData.length > 0){
+  const { error:wellnessError } = await supabase
+  .from("wellness_logs")
+  .upsert(wellnessData,{
+    onConflict:"player_id,date"
+  })
+
+  if(wellnessError){
+    console.error("Wellness insert error:",wellnessError)
+  }
 }
+// ==========================================
 
 showToast("CSV Import Complete","success")
 setImportFile(null) 
@@ -310,60 +370,347 @@ initPage()
 
 }
 
+
+async function handleXLSXImport() {
+    if (!importFile) {
+      showToast("Please upload an Excel file", "error")
+      return
+    }
+
+    if (selectedTeam === "all") {
+      alert("Please select a team first")
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const data = new Uint8Array(e.target.result)
+        const workbook = XLSX.read(data, { type: "array" })
+        const firstSheetName = workbook.SheetNames[0]
+        const worksheet = workbook.Sheets[firstSheetName]
+        
+        // Convert Excel sheet to JSON array
+        const rawRows = XLSX.utils.sheet_to_json(worksheet)
+
+        // Normalize column names to lowercase so it matches our database logic perfectly
+        const rows = rawRows.map(row => {
+          const normalized = {}
+          for (const key in row) {
+            normalized[key.toLowerCase().trim()] = row[key]
+          }
+          return normalized
+        })
+
+        // STEP 1 — collect unique players
+        const playerKeys = new Set()
+        rows.forEach(r => {
+          playerKeys.add(`${r.name}|${r.dob}`)
+        })
+
+        const playerList = []
+        rows.forEach(r => {
+          const key = `${r.name}|${r.dob}`
+          if (!playerList.find(p => p.key === key)) {
+            playerList.push({
+              key,
+              name: r.name,
+              dob: r.dob,
+              position: r.position || null,
+              height: r.height ? Number(r.height) : null,
+              weight: r.weight ? Number(r.weight) : null
+            })
+          }
+        })
+
+        // STEP 2 — get existing players only from Excel
+        const names = playerList.map(p => p.name)
+        const dobs = playerList.map(p => p.dob)
+
+        const { data: existingPlayers } = await supabase
+          .from("players")
+          .select("id,name,dob")
+          .in("name", names)
+          .in("dob", dobs)
+
+        const playerMap = {}
+        existingPlayers?.forEach(p => {
+          playerMap[`${p.name}|${p.dob}`] = p
+        })
+
+        // STEP 3 — detect missing players
+        const newPlayers = []
+        playerList.forEach(p => {
+          const key = `${p.name}|${p.dob}`
+          if (!playerMap[key]) {
+            newPlayers.push({
+              name: p.name,
+              dob: p.dob,
+              position: p.position,
+              height: p.height,
+              weight: p.weight,
+              role: "athlete"
+            })
+          }
+        })
+
+        // STEP 4 — bulk create players
+        if (newPlayers.length > 0) {
+          const { data: createdPlayers, error: createError } = await supabase
+            .from("players")
+            .insert(newPlayers)
+            .select()
+
+          if (createError) console.error("Player insert error:", createError)
+
+          if (createdPlayers && createdPlayers.length > 0) {
+            createdPlayers.forEach(p => {
+              playerMap[`${p.name}|${p.dob}`] = p
+            })
+          }
+        }
+
+        // STEP 5 — create team_members
+        const teamMembersMap = new Map()
+        rows.forEach(row => {
+          const key = `${row.name}|${row.dob}`
+          const player = playerMap[key]
+
+          if (!player) return
+          const uniqueKey = `${selectedTeam}-${player.id}`
+
+          if (!teamMembersMap.has(uniqueKey)) {
+            teamMembersMap.set(uniqueKey, {
+              team_id: selectedTeam,
+              player_id: player.id
+            })
+          }
+        })
+
+        const teamMembers = Array.from(teamMembersMap.values())
+        await supabase.from("team_members").upsert(teamMembers, { onConflict: "team_id,player_id" })
+
+        // STEP 6 & 7 — prepare and insert sessions
+        const sessions = []
+        rows.forEach(row => {
+          const key = `${row.name}|${row.dob}`
+          const player = playerMap[key]
+
+          if (!player || !row.date || !row.rpe || !row.duration) return
+
+          // Handle Excel date formats correctly if they are parsed as numbers
+          let sessionDate = row.date
+          if (typeof sessionDate === 'number') {
+            // Convert Excel serial date to YYYY-MM-DD
+            const dateObj = new Date(Math.round((sessionDate - 25569) * 86400 * 1000))
+            sessionDate = dateObj.toISOString().split('T')[0]
+          }
+
+          sessions.push({
+            player_id: player.id,
+            date: sessionDate,
+            rpe: Number(row.rpe),
+            duration: Number(row.duration),
+            load: Number(row.rpe) * Number(row.duration)
+          })
+        })
+
+        if (sessions.length > 0) {
+          await supabase.from("sessions").upsert(sessions, { onConflict: "player_id,date" })
+        }
+
+        // STEP 8 — prepare and insert wellness logs
+        const wellnessData = []
+        rows.forEach(row => {
+          const key = `${row.name}|${row.dob}`
+          const player = playerMap[key]
+
+          if (!player || !row.date) return
+          
+          let sessionDate = row.date
+          if (typeof sessionDate === 'number') {
+            const dateObj = new Date(Math.round((sessionDate - 25569) * 86400 * 1000))
+            sessionDate = dateObj.toISOString().split('T')[0]
+          }
+
+          if (row.sleep || row.fatigue || row.soreness || row.stress || row.mood) {
+            wellnessData.push({
+              player_id: player.id,
+              date: sessionDate,
+              sleep: row.sleep ? Number(row.sleep) : null,
+              fatigue: row.fatigue ? Number(row.fatigue) : null,
+              soreness: row.soreness ? Number(row.soreness) : null,
+              stress: row.stress ? Number(row.stress) : null,
+              mood: row.mood ? Number(row.mood) : null
+            })
+          }
+        })
+
+        if (wellnessData.length > 0) {
+          await supabase.from("wellness_logs").upsert(wellnessData, { onConflict: "player_id,date" })
+        }
+
+        showToast("Excel Import Complete", "success")
+        setImportFile(null)
+        initPage()
+
+      } catch (err) {
+        console.error("Excel processing error:", err)
+        showToast("Failed to parse Excel file", "error")
+      }
+    }
+    reader.readAsArrayBuffer(importFile)
+  }
+
+  async function handleExportXLSX() {
+    if (selectedTeam === "all") {
+      alert("Please select a team before exporting")
+      return
+    }
+
+    const { data: members } = await supabase
+      .from("team_members")
+      .select("player_id")
+      .eq("team_id", selectedTeam)
+
+    const playerIds = members.map(m => m.player_id)
+
+    const { data: players } = await supabase
+      .from("players")
+      .select("id,name,dob,position,height,weight")
+      .in("id", playerIds)
+
+    const { data: sessions } = await supabase
+      .from("sessions")
+      .select("*")
+      .in("player_id", playerIds)
+
+    const { data: wellnessLogs } = await supabase
+      .from("wellness_logs")
+      .select("*")
+      .in("player_id", playerIds)
+
+    if (!sessions || sessions.length === 0) {
+      alert("No session data to export")
+      return
+    }
+
+    const playerMap = {}
+    players.forEach(p => { playerMap[p.id] = p })
+
+    const wMap = {}
+    if (wellnessLogs) {
+      wellnessLogs.forEach(w => {
+        if (!wMap[w.player_id]) wMap[w.player_id] = {}
+        wMap[w.player_id][w.date] = w
+      })
+    }
+
+    // Build JSON objects for Excel Rows
+    const exportData = sessions.map(s => {
+      const player = playerMap[s.player_id] || {}
+      const w = wMap[s.player_id]?.[s.date] || {}
+
+      return {
+        name: player.name || "",
+        dob: player.dob || "",
+        position: player.position || "",
+        height: player.height || "",
+        weight: player.weight || "",
+        date: s.date,
+        rpe: s.rpe,
+        duration: s.duration,
+        sleep: w.sleep || "",
+        fatigue: w.fatigue || "",
+        soreness: w.soreness || "",
+        stress: w.stress || "",
+        mood: w.mood || ""
+      }
+    })
+
+    // Create the Excel Workbook
+    const worksheet = XLSX.utils.json_to_sheet(exportData)
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Team Sessions")
+
+    // Download it directly as an .xlsx file!
+    XLSX.writeFile(workbook, "team_data_export.xlsx")
+  }
+
+
 async function handleExportCSV(){
 
-if(selectedTeam === "all"){
-alert("Please select a team before exporting")
-return
-}
+  if(selectedTeam === "all"){
+    alert("Please select a team before exporting")
+    return
+  }
 
-const { data: members } = await supabase
-.from("team_members")
-.select("player_id")
-.eq("team_id", selectedTeam)
+  const { data: members } = await supabase
+  .from("team_members")
+  .select("player_id")
+  .eq("team_id", selectedTeam)
 
-const playerIds = members.map(m => m.player_id)
+  const playerIds = members.map(m => m.player_id)
 
-const { data: players } = await supabase
-.from("players")
-.select("id,name,dob,position,height,weight")
-.in("id", playerIds)
+  const { data: players } = await supabase
+  .from("players")
+  .select("id,name,dob,position,height,weight")
+  .in("id", playerIds)
 
-const { data: sessions } = await supabase
-.from("sessions")
-.select("*")
-.in("player_id", playerIds)
+  const { data: sessions } = await supabase
+  .from("sessions")
+  .select("*")
+  .in("player_id", playerIds)
 
-if(!sessions || sessions.length === 0){
-alert("No session data to export")
-return
-}
+  // NEW: Fetch wellness logs for these players
+  const { data: wellnessLogs } = await supabase
+  .from("wellness_logs")
+  .select("*")
+  .in("player_id", playerIds)
 
-// map players
-const playerMap = {}
-players.forEach(p=>{
-playerMap[p.id] = p
-})
+  if(!sessions || sessions.length === 0){
+    alert("No session data to export")
+    return
+  }
 
-let csv = "name,dob,position,height,weight,date,rpe,duration\n"
+  // map players
+  const playerMap = {}
+  players.forEach(p=>{
+    playerMap[p.id] = p
+  })
 
-sessions.forEach(s=>{
+  // NEW: Map wellness logs by player_id and date for quick lookup
+  const wMap = {}
+  if(wellnessLogs) {
+    wellnessLogs.forEach(w => {
+      if(!wMap[w.player_id]) wMap[w.player_id] = {}
+      wMap[w.player_id][w.date] = w
+    })
+  }
 
-const player = playerMap[s.player_id]
+  // NEW: Updated CSV Headers
+  let csv = "name,dob,position,height,weight,date,rpe,duration,sleep,fatigue,soreness,stress,mood\n"
 
-if(!player) return
+  sessions.forEach(s=>{
 
-csv += `${player.name},${player.dob},${player.position || ""},${player.height || ""},${player.weight || ""},${s.date},${s.rpe},${s.duration}\n`
+    const player = playerMap[s.player_id]
+    if(!player) return
 
-})
+    // NEW: Get wellness data for this specific player on this specific date
+    const w = wMap[s.player_id]?.[s.date] || {}
 
-const blob = new Blob([csv],{type:"text/csv"})
-const url = URL.createObjectURL(blob)
+    // NEW: Appended wellness variables to the row
+    csv += `${player.name},${player.dob},${player.position || ""},${player.height || ""},${player.weight || ""},${s.date},${s.rpe},${s.duration},${w.sleep || ""},${w.fatigue || ""},${w.soreness || ""},${w.stress || ""},${w.mood || ""}\n`
 
-const a = document.createElement("a")
-a.href = url
-a.download = "team_sessions.csv"
-a.click()
+  })
+
+  const blob = new Blob([csv],{type:"text/csv"})
+  const url = URL.createObjectURL(blob)
+
+  const a = document.createElement("a")
+  a.href = url
+  a.download = "team_sessions_and_wellness.csv"
+  a.click()
 
 }
 function getWellnessColor(value, type){
@@ -874,7 +1221,7 @@ Create Team </button> */}
 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
 
 {/* DATA MANAGEMENT */}
-
+{/* 
 <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
 
 <h3 className="font-bold text-lg mb-5 flex items-center gap-2">
@@ -921,8 +1268,38 @@ Export
 
 </div>
 
-</div>
+</div> */}
+{/* DATA MANAGEMENT */}
+            <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm p-6 hover:shadow-md transition-shadow">
+              <h3 className="font-extrabold text-lg text-slate-800 mb-5 flex items-center gap-2">
+                <FileSpreadsheet className="text-emerald-500" size={22} /> Upload Data (Excel)
+              </h3>
+              <div className="flex flex-col sm:flex-row gap-4">
+                <label htmlFor="csvUpload" className="flex-1 cursor-pointer border-2 border-dashed border-slate-200 bg-slate-50/50 hover:bg-emerald-50/50 hover:border-emerald-400 transition-colors rounded-xl px-5 py-6 flex flex-col items-center justify-center text-slate-500 group">
+                  
+                  {/* Changed accept to .xlsx and .xls */}
+                  <input id="csvUpload" type="file" accept=".xlsx, .xls" onChange={(e) => setImportFile(e.target.files?.[0] || null)} className="hidden" />
+                  
+                  <UploadCloud size={28} className="text-slate-400 group-hover:text-emerald-500 mb-2 transition-colors" />
+                  <span className="font-semibold text-sm group-hover:text-emerald-600 transition-colors">
+                    {importFile ? importFile.name : "Drag & Drop or Browse Excel File..."}
+                  </span>
+                </label>
+                <div className="flex flex-col gap-3 justify-center sm:w-40">
+                  
+                  {/* Updated to handleXLSXImport */}
+                  <button onClick={handleXLSXImport} disabled={!importFile} className={`flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-sm shadow-sm transition-all ${importFile ? "bg-emerald-600 hover:bg-emerald-700 text-white" : "bg-slate-100 text-slate-400 cursor-not-allowed"}`}>
+                    <UploadCloud size={16} /> Import
+                  </button>
+                  
+                  {/* Updated to handleExportXLSX */}
+                  <button onClick={handleExportXLSX} className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-sm border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors">
+                    <DownloadCloud size={16} /> Export
+                  </button>
 
+                </div>
+              </div>
+            </div>
 
 {/* BUILD TEAM CARD */}
 
